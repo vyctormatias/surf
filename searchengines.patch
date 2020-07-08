@@ -1,0 +1,117 @@
+--- a/Makefile
++++ b/Makefile
+@@ -4,11 +4,9 @@
+ 
+ include config.mk
+ 
+-SRC = surf.c
+-CSRC = common.c
+-WEBEXTSRC = libsurf-webext.c
++SRC = surf.c common.c
+ OBJ = $(SRC:.c=.o)
+-COBJ = $(CSRC:.c=.o)
++WEBEXTSRC = libsurf-webext.c
+ WEBEXTOBJ = $(WEBEXTSRC:.c=.o)
+ 
+ all: options libsurf-webext.so surf
+@@ -27,21 +25,18 @@
+ 	cp config.def.h $@
+ 
+ $(OBJ): config.h common.h config.mk
+-$(COBJ): config.h common.h config.mk
+-$(WEBEXTOBJ): config.h common.h config.mk
+ 
+-$(WEBEXTOBJ): $(WEBEXTSRC)
++$(WEBEXTOBJ): $(WEBEXTSRC) config.h common.h config.mk
+ 	$(CC) $(WEBEXTCFLAGS) $(CFLAGS) -c $(WEBEXTSRC)
+ 
+-libsurf-webext.so: $(WEBEXTOBJ) $(COBJ)
+-	$(CC) -shared -Wl,-soname,$@ $(LDFLAGS) -o $@ \
+-	    $(WEBEXTOBJ) $(COBJ) $(WEBEXTLIBS)
++libsurf-webext.so: $(WEBEXTOBJ)
++	$(CC) -shared -Wl,-soname,$@ $(LDFLAGS) -o $@ $< $(WEBEXTLIBS) -lc
+ 
+-surf: $(OBJ) $(COBJ)
+-	$(CC) $(SURFLDFLAGS) $(LDFLAGS) -o $@ $(OBJ) $(COBJ) $(LIBS)
++surf: $(OBJ)
++	$(CC) $(SURFLDLAGS) $(LDFLAGS) -o $@ $(OBJ) $(LIBS)
+ 
+ clean:
+-	rm -f surf $(OBJ) $(COBJ)
++	rm -f surf $(OBJ)
+ 	rm -f libsurf-webext.so $(WEBEXTOBJ)
+ 
+ distclean: clean
+
+--- a/config.def.h
++++ b/config.def.h
+@@ -7,6 +7,13 @@
+ static char *cachedir       = "~/.surf/cache/";
+ static char *cookiefile     = "~/.surf/cookies.txt";
+ 
++/* search engines */
++static SearchEngine searchengines[] = {
++	{ "g",   "http://www.google.de/search?q=%s"   },
++	{ "leo", "http://dict.leo.org/ende?search=%s" },
++	{ "ddg", "https://duckduckgo.com/?q=%s"       },
++};
++
+ /* Webkit default features */
+ /* Highest priority value will be used.
+  * Default parameters are priority 0
+
+--- a/surf.c
++++ b/surf.c
+@@ -135,6 +135,12 @@
+ } UriParameters;
+ 
+ typedef struct {
++	char *token;
++	char *uri;
++} SearchEngine;
++
++
++typedef struct {
+ 	char *regex;
+ 	char *file;
+ 	regex_t re;
+@@ -175,6 +181,7 @@
+ static void msgext(Client *c, char type, const Arg *a);
+ static void destroyclient(Client *c);
+ static void cleanup(void);
++static gchar *parseuri(const gchar *uri);
+ 
+ /* GTK/WebKit */
+ static WebKitWebView *newview(Client *c, WebKitWebView *rv);
+@@ -559,7 +566,7 @@
+ 			url = g_strdup_printf("file://%s", path);
+ 			free(path);
+ 		} else {
+-			url = g_strdup_printf("http://%s", uri);
++			url = parseuri(uri);
+ 		}
+ 		if (apath != uri)
+ 			free(apath);
+@@ -1765,6 +1772,22 @@
+ 		gtk_main_quit();
+ }
+ 
++static gchar *
++parseuri(const gchar *uri) {
++   guint i;
++
++   for (i = 0; i < LENGTH(searchengines); i++) {
++       if (searchengines[i].token == NULL || searchengines[i].uri == NULL ||
++           *(uri + strlen(searchengines[i].token)) != ' ')
++           continue;
++       if (g_str_has_prefix(uri, searchengines[i].token))
++           return g_strdup_printf(searchengines[i].uri,
++                       uri + strlen(searchengines[i].token) + 1);
++   }
++
++   return g_strdup_printf("http://%s", uri);
++}
++
+ void
+ pasteuri(GtkClipboard *clipboard, const char *text, gpointer d)
+ {
